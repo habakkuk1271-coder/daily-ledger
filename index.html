@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#eaf4ff" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="日日帳" />
+  <title>日日帳 V1</title>
+  <style>
+    :root{--bg:#f5f9fd;--card:#fff;--text:#17324d;--muted:#718096;--line:#dbe7f1;--blue:#4a90e2;--green:#4ea97d;--red:#d96a6a;--shadow:0 10px 30px rgba(46,86,120,.08)}
+    *{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif;background:linear-gradient(180deg,#eaf4ff 0,#f8fbfe 220px,#f5f9fd 100%);color:var(--text)}
+    .wrap{max-width:760px;margin:0 auto;padding:18px 14px 100px}.hero{padding:18px 4px 14px}.hero h1{margin:0;font-size:28px}.hero p{margin:6px 0 0;color:var(--muted);font-size:14px}
+    .card{background:var(--card);border:1px solid rgba(219,231,241,.9);border-radius:18px;padding:16px;margin:12px 0;box-shadow:var(--shadow)}
+    .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px} input,select,button{width:100%;font:inherit} input,select{border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff;color:var(--text);outline:none} input:focus,select:focus{border-color:#8db8e8;box-shadow:0 0 0 3px rgba(74,144,226,.12)}
+    button{border:0;border-radius:13px;padding:13px 14px;background:var(--blue);color:#fff;font-weight:700;cursor:pointer} button.secondary{background:#eef5fb;color:#315d86} button.danger{background:#fff0f0;color:#b84b4b;border:1px solid #f0caca}
+    .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.pill{padding:13px;border-radius:14px;background:#f7fbff;border:1px solid #e2edf6}.pill b{display:block;font-size:18px;margin-top:3px}.small{font-size:12px;color:var(--muted)}
+    .tabs{display:flex;gap:8px;position:sticky;top:0;z-index:5;padding:8px 0;background:linear-gradient(180deg,rgba(245,249,253,.98),rgba(245,249,253,.92))}.tab{background:#eef5fb;color:#476782}.tab.active{background:#4a90e2;color:#fff}
+    .row{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #edf2f6}.row:last-child{border-bottom:0}.amount.expense{color:var(--red)}.amount.income{color:var(--green)}
+    .hidden{display:none}.section-title{font-size:17px;font-weight:800;margin:0 0 12px}.footer-note{text-align:center;color:#8a9aaa;font-size:12px;margin-top:18px}
+    @media(max-width:560px){.grid,.grid3,.summary{grid-template-columns:1fr}.hero h1{font-size:25px}.wrap{padding-left:12px;padding-right:12px}.tabs{overflow:auto}.tabs button{min-width:100px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero"><h1>日日帳</h1><p>簡單記錄每天的收入、支出與每月預算。</p></header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="ledger">記帳</button>
+      <button class="tab" data-tab="budget">本月預算</button>
+      <button class="tab" data-tab="history">紀錄</button>
+    </nav>
+
+    <section id="ledger" class="panel">
+      <div class="card">
+        <h2 class="section-title">新增紀錄</h2>
+        <div class="grid">
+          <div><label>日期</label><input id="date" type="date"></div>
+          <div><label>時間</label><input id="time" type="time"></div>
+        </div>
+        <div class="grid" style="margin-top:10px">
+          <div><label>類型</label><select id="type"><option value="expense">支出</option><option value="income">額外收入</option></select></div>
+          <div><label>金額</label><input id="amount" type="number" min="0" step="1" inputmode="decimal" placeholder="0"></div>
+        </div>
+        <div class="grid" style="margin-top:10px">
+          <div><label>付款方式</label><select id="payment"><option>現金</option><option>信用卡 A</option><option>信用卡 B</option><option>信用卡 C</option><option>信用卡 D</option></select></div>
+          <div><label>分類</label><select id="category"><option>餐飲</option><option>交通</option><option>日用品</option><option>娛樂</option><option>服飾</option><option>其他</option></select></div>
+        </div>
+        <div style="margin-top:10px"><label>備註</label><input id="note" type="text" placeholder="例如：午餐、加油"></div>
+        <button id="save" style="margin-top:14px">儲存這筆紀錄</button>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">今日概況</h2>
+        <div class="summary">
+          <div class="pill"><span class="small">今日可用</span><b id="todayAvailable">$0</b></div>
+          <div class="pill"><span class="small">今日已支出</span><b id="todaySpent">$0</b></div>
+          <div class="pill"><span class="small">今日剩餘</span><b id="todayRemain">$0</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="budget" class="panel hidden">
+      <div class="card">
+        <h2 class="section-title">每月設定</h2>
+        <div class="grid">
+          <div><label>每月薪資</label><input id="salary" type="number" min="0" placeholder="0"></div>
+          <div><label>每月儲蓄</label><input id="saving" type="number" min="0" placeholder="0"></div>
+        </div>
+        <div class="grid" style="margin-top:10px">
+          <div><label>本月額外收入</label><input id="extraIncome" type="number" min="0" placeholder="0"></div>
+          <div><label>本月支出預算</label><input id="monthlyBudget" type="number" min="0" placeholder="0"></div>
+        </div>
+        <button id="saveSettings" style="margin-top:14px">儲存本月設定</button>
+      </div>
+      <div class="card">
+        <h2 class="section-title">預算換算</h2>
+        <div class="summary">
+          <div class="pill"><span class="small">月預算</span><b id="monthBudgetView">$0</b></div>
+          <div class="pill"><span class="small">每日基準</span><b id="dailyBudgetView">$0</b></div>
+          <div class="pill"><span class="small">本月剩餘</span><b id="monthRemainView">$0</b></div>
+        </div>
+        <p class="small" style="margin:12px 2px 0">每日可用額會依本月剩餘預算與剩餘天數重新計算，等同把前一天的正負餘額自然結轉到後續日期。</p>
+      </div>
+    </section>
+
+    <section id="history" class="panel hidden">
+      <div class="card">
+        <div style="display:flex;gap:10px;justify-content:space-between;align-items:center"><h2 class="section-title" style="margin:0">最近紀錄</h2><button id="clearAll" class="danger" style="width:auto;padding:9px 12px">清除全部</button></div>
+        <div id="records" style="margin-top:8px"></div>
+      </div>
+    </section>
+
+    <div class="footer-note">資料目前只儲存在此 Safari／瀏覽器裝置中，不會上傳到外部伺服器。</div>
+  </main>
+
+<script>
+const $=id=>document.getElementById(id); const STORAGE='daily-ledger-v1';
+let state=JSON.parse(localStorage.getItem(STORAGE)||'{"records":[],"settings":{}}');
+function saveState(){localStorage.setItem(STORAGE,JSON.stringify(state));render()}
+function money(n){return '$'+Math.round(Number(n)||0).toLocaleString('zh-TW')}
+function nowFields(){const d=new Date(); $('date').value=d.toLocaleDateString('en-CA'); $('time').value=d.toTimeString().slice(0,5)}
+function daysInMonth(d=new Date()){return new Date(d.getFullYear(),d.getMonth()+1,0).getDate()}
+function currentMonthKey(){const d=new Date();return d.toISOString().slice(0,7)}
+function monthRecords(){const k=currentMonthKey();return state.records.filter(r=>r.date.startsWith(k))}
+function totalExpenses(records){return records.filter(r=>r.type==='expense').reduce((a,r)=>a+Number(r.amount),0)}
+function totalIncome(records){return records.filter(r=>r.type==='income').reduce((a,r)=>a+Number(r.amount),0)}
+function render(){
+ const s=state.settings||{}; ['salary','saving','extraIncome','monthlyBudget'].forEach(k=>{if(document.activeElement!==$(k))$(k).value=s[k]??''});
+ const month=monthRecords(), spent=totalExpenses(month), added=totalIncome(month); const budget=Number(s.monthlyBudget)||0; const remain=budget+added-spent;
+ const d=new Date(), remainingDays=daysInMonth(d)-d.getDate()+1; const daily=remainingDays>0?remain/remainingDays:0;
+ $('monthBudgetView').textContent=money(budget); $('dailyBudgetView').textContent=money(daily); $('monthRemainView').textContent=money(remain);
+ const today=d.toLocaleDateString('en-CA'), tr=state.records.filter(r=>r.date===today), todaySpent=totalExpenses(tr), todayIncome=totalIncome(tr); const todayAvailable=daily+todaySpent-todayIncome;
+ $('todayAvailable').textContent=money(todayAvailable); $('todaySpent').textContent=money(todaySpent); $('todayRemain').textContent=money(todayAvailable+todayIncome-todaySpent);
+ const box=$('records'); box.innerHTML=''; const list=[...state.records].sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+ if(!list.length){box.innerHTML='<p class="small">目前還沒有紀錄。</p>';return}
+ list.slice(0,100).forEach((r,i)=>{const row=document.createElement('div');row.className='row';row.innerHTML=`<div><b>${r.note||r.category}</b><div class="small">${r.date} ${r.time} · ${r.payment} · ${r.category}</div></div><div style="text-align:right"><div class="amount ${r.type}">${r.type==='expense'?'-':'+'}${money(r.amount)}</div><button class="secondary" data-del="${r.id}" style="width:auto;padding:5px 8px;margin-top:5px;font-size:12px">刪除</button></div>`;box.appendChild(row)});
+ box.querySelectorAll('[data-del]').forEach(btn=>btn.onclick=()=>{state.records=state.records.filter(r=>String(r.id)!==btn.dataset.del);saveState()});
+}
+document.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));$(btn.dataset.tab).classList.remove('hidden')});
+$('save').onclick=()=>{const amount=Number($('amount').value);if(!amount||amount<=0){alert('請輸入金額');return}state.records.push({id:Date.now(),date:$('date').value,time:$('time').value,type:$('type').value,amount,payment:$('payment').value,category:$('category').value,note:$('note').value.trim()});saveState();$('amount').value='';$('note').value='';nowFields();alert('已儲存')};
+$('saveSettings').onclick=()=>{state.settings={salary:Number($('salary').value)||0,saving:Number($('saving').value)||0,extraIncome:Number($('extraIncome').value)||0,monthlyBudget:Number($('monthlyBudget').value)||0};saveState();alert('本月設定已儲存')};
+$('clearAll').onclick=()=>{if(confirm('確定要清除所有記帳紀錄嗎？此動作無法復原。')){state.records=[];saveState()}};
+nowFields();render();
+</script>
+</body>
+</html>
