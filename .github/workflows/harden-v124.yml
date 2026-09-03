@@ -1,0 +1,59 @@
+name: Harden V1.2.4
+on:
+  push:
+    branches: [sync-hardening-v124c]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync-hardening-v124c
+      - name: Patch index safely
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('index.html'); s=p.read_text()
+          def rep(old,new):
+            global s
+            if old not in s: raise SystemExit('Expected source not found: '+old[:100])
+            s=s.replace(old,new,1)
+          rep('<title>日日帳 V1.2.3</title>','<title>日日帳 V1.2.4</title>')
+          rep('Google Sheet 是正式資料庫；本機保留快取與離線容錯。V1.2.3','Google Sheet 是正式資料庫；本機保留快取與離線容錯。V1.2.4')
+          rep("if(!state.monthlySettings||typeof state.monthlySettings!=='object')state.monthlySettings={};", "if(!state.monthlySettings||typeof state.monthlySettings!=='object')state.monthlySettings={};if(!state.pendingUpserts||typeof state.pendingUpserts!=='object')state.pendingUpserts={};if(!state.pendingDeletes||typeof state.pendingDeletes!=='object')state.pendingDeletes={};if(!state.pendingSettings||typeof state.pendingSettings!=='object')state.pendingSettings={};")
+          rep("function carryRecord(k){return monthRecords(k).find(r=>r.type==='carryover')}function carryDeduction(k){return +(carryRecord(k)?.amount||0)}function stats(k){let s=state.monthlySettings[k]||{salary:0,saving:0},rs=monthRecords(k),inc=income(rs),ded=carryDeduction(k),base=(+s.salary||0)-(+s.saving||0)-ded,budget=base+inc,spent=expenses(rs);return{...s,inc,ded,budget,spent,remain:budget-spent,daily:base/days(k)}}function previousOverspend(k){let p=stats(prevMonth(k));return Math.max(0,p.spent-p.budget)}", "function carryRecord(k){return monthRecords(k).find(r=>r.type==='carryover')}function carryDeduction(k){return +(carryRecord(k)?.amount||0)}function hasMonthSetting(k){return Object.prototype.hasOwnProperty.call(state.monthlySettings,k)}function stats(k){let s=state.monthlySettings[k]||{salary:0,saving:0},rs=monthRecords(k),inc=income(rs),ded=carryDeduction(k),base=(+s.salary||0)-(+s.saving||0)-ded,budget=base+inc,spent=expenses(rs);return{...s,inc,ded,budget,spent,remain:budget-spent,daily:base/days(k)}}function previousOverspend(k){let pk=prevMonth(k);if(!hasMonthSetting(pk))return 0;let p=stats(pk);return Math.max(0,p.spent-p.budget)}")
+          old="async function syncRecord(r){try{let x=await jsonpCall('upsertRecord',{record:r});if(!x?.ok)throw 0;setSync('已與 Google Sheet 同步',true);return true}catch(e){setSync('已保存在本機，等待同步');return false}}async function deleteRemote(id){try{let x=await jsonpCall('deleteRecord',{id});if(!x?.ok)throw 0;setSync('已與 Google Sheet 同步',true);return true}catch(e){setSync('刪除已保存在本機，等待同步');return false}}"
+          new="async function syncRecord(r){state.pendingUpserts[String(r.id)]=r;delete state.pendingDeletes[String(r.id)];persist();try{let x=await jsonpCall('upsertRecord',{record:r});if(!x?.ok)throw 0;delete state.pendingUpserts[String(r.id)];persist();return true}catch(e){setSync('已保存在本機，等待同步');return false}}async function deleteRemote(id){id=String(id);state.pendingDeletes[id]=true;delete state.pendingUpserts[id];persist();try{let x=await jsonpCall('deleteRecord',{id});if(!x?.ok)throw 0;delete state.pendingDeletes[id];persist();return true}catch(e){setSync('刪除已保存在本機，等待同步');return false}}async function syncSetting(k){let v=state.pendingSettings[k];if(!v)return true;try{let x=await jsonpCall('saveSettings',{month:k,salary:+v.salary||0,saving:+v.saving||0});if(!x?.ok)throw 0;delete state.pendingSettings[k];persist();return true}catch(e){return false}}async function flushPending(){let ok=true;for(let id of Object.keys(state.pendingDeletes)){try{let x=await jsonpCall('deleteRecord',{id});if(!x?.ok)throw 0;delete state.pendingDeletes[id]}catch(e){ok=false}}for(let id of Object.keys(state.pendingUpserts)){let r=state.pendingUpserts[id];try{let x=await jsonpCall('upsertRecord',{record:r});if(!x?.ok)throw 0;delete state.pendingUpserts[id]}catch(e){ok=false}}for(let k of Object.keys(state.pendingSettings))if(!await syncSetting(k))ok=false;persist();return ok}"
+          rep(old,new)
+          start=s.index('async function loadRemote(){'); end=s.index('\nfunction nowForm()',start)
+          if start<0 or end<0: raise SystemExit('loadRemote block not found')
+          s=s[:start]+"async function loadRemote(){setSync('正在核對 Google Sheet…');try{await flushPending();let x=await jsonpCall('load');if(!x?.ok)throw 0;let remote=x.records||[],map=new Map(remote.map(r=>[String(r.id),r]));Object.keys(state.pendingDeletes).forEach(id=>map.delete(String(id)));state.records.forEach(r=>{let id=String(r.id),q=map.get(id);if(state.pendingUpserts[id]||!q||String(r.updatedAt||'')>String(q.updatedAt||''))map.set(id,r)});state.records=[...map.values()];Object.entries(x.monthlySettings||{}).forEach(([k,v])=>{if(!state.pendingSettings[k])state.monthlySettings[k]={salary:+v.salary||0,saving:+v.saving||0}});persist();render();let clean=await flushPending();if(clean){let verify=await jsonpCall('load');if(!verify?.ok)throw 0;let remoteIds=new Set((verify.records||[]).map(r=>String(r.id))),badUp=Object.keys(state.pendingUpserts).length,badDel=Object.keys(state.pendingDeletes).length,badSet=Object.keys(state.pendingSettings).length;if(!badUp&&!badDel&&!badSet)setSync('已與 Google Sheet 核對同步',true);else setSync('已保存在本機，等待同步')}else setSync('已保存在本機，等待同步')}catch(e){setSync('Google Sheet 暫時無法同步；目前使用本機快取');render()}}"+s[end:]
+          old="function saveSettings(){let k=$('budgetMonth').value;state.monthlySettings[k]={salary:+$('salary').value||0,saving:+$('saving').value||0};persist();render();$('autosaveText').textContent='已保存在本機，正在同步…';clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{try{let x=await jsonpCall('saveSettings',{month:k,...state.monthlySettings[k]});$('autosaveText').textContent=x?.ok?'已與 Google Sheet 同步。':'本機已保存，等待同步。'}catch(e){$('autosaveText').textContent='本機已保存，等待同步。'}},300)}"
+          new="function saveSettings(){let k=$('budgetMonth').value,v={salary:+$('salary').value||0,saving:+$('saving').value||0};state.monthlySettings[k]=v;state.pendingSettings[k]={...v,updatedAt:new Date().toISOString()};persist();render();$('autosaveText').textContent='已保存在本機，正在同步…';clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{$('autosaveText').textContent=await syncSetting(k)?'已與 Google Sheet 同步。':'本機已保存，等待同步。'},300)}"
+          rep(old,new)
+          rep("if(type==='expense'){let st=stats(k)", "if(type==='reserve'){let cs=cardStatus()[$('actionCard').value];if(amount>cs.unreserved&&!confirm(`目前這張卡待預留只有 ${money(cs.unreserved)}，你輸入 ${money(amount)}。超出的部分不會增加已預留金額。仍要記錄嗎？`))return}if(type==='repayment'){let cs=cardStatus()[$('actionCard').value];if(amount>cs.outstanding&&!confirm(`目前這張卡待償只有 ${money(cs.outstanding)}，你輸入 ${money(amount)}。超出的部分不會再減少待償。仍要記錄嗎？`))return}if(type==='expense'){let st=stats(k)")
+          rep("deletedBuffer=state.records[i];state.records.splice(i,1);persist();render();deleteRemote(id);", "deletedBuffer=state.records[i];state.records.splice(i,1);state.pendingDeletes[String(id)]=true;delete state.pendingUpserts[String(id)];persist();render();deleteRemote(id);")
+          rep("state.records.push(deletedBuffer);persist();syncRecord(deletedBuffer);", "state.records.push(deletedBuffer);delete state.pendingDeletes[String(deletedBuffer.id)];state.pendingUpserts[String(deletedBuffer.id)]=deletedBuffer;persist();syncRecord(deletedBuffer);")
+          p.write_text(s)
+      - name: Static checks
+        shell: bash
+        run: |
+          grep -q '日日帳 V1.2.4' index.html
+          grep -q 'pendingDeletes' index.html
+          grep -q 'pendingSettings' index.html
+          grep -q "if(!hasMonthSetting(pk))return 0" index.html
+          test "$(grep -o '<script>' index.html | wc -l)" -eq 1
+          test "$(grep -o '</script>' index.html | wc -l)" -eq 1
+          test "$(grep -o '<html' index.html | wc -l)" -eq 1
+          test "$(grep -o '</html>' index.html | wc -l)" -eq 1
+      - name: Commit patched file
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.html
+          git commit -m 'Harden offline sync and recovery V1.2.4'
+          git push origin HEAD:sync-hardening-v124c
