@@ -52,7 +52,20 @@ let state;
 try{state=JSON.parse(localStorage.getItem(STORAGE)||'{}')}catch(e){state={}}
 if(!Array.isArray(state.records))state.records=[];
 if(!state.monthlySettings||typeof state.monthlySettings!=='object')state.monthlySettings={};
-function migrate(){const cm=currentMonthKey();if(state.settings&&!state.monthlySettings[cm])state.monthlySettings[cm]={salary:Number(state.settings.salary)||0,saving:Number(state.settings.saving)||0};delete state.settings;Object.keys(state.monthlySettings).forEach(k=>{const s=state.monthlySettings[k]||{};state.monthlySettings[k]={salary:Number(s.salary)||0,saving:Number(s.saving)||0}});persist()}
+function migrate(){
+  const cm=currentMonthKey();
+  if(state.settings&&!state.monthlySettings[cm])state.monthlySettings[cm]={salary:Number(state.settings.salary)||0,saving:Number(state.settings.saving)||0};
+  delete state.settings;
+  Object.keys(state.monthlySettings).forEach(k=>{const s=state.monthlySettings[k]||{};state.monthlySettings[k]={salary:Number(s.salary)||0,saving:Number(s.saving)||0}});
+  state.records=state.records.map((r,i)=>{
+    const copy={...r};
+    if(!copy.id)copy.id=`legacy-${String(copy.date||'').replaceAll('-','')}-${String(copy.time||'').replace(':','')}-${i}-${Math.random().toString(36).slice(2,7)}`;
+    if(!copy.updatedAt){const dt=`${copy.date||'1970-01-01'}T${copy.time||'00:00'}:00`;const parsed=new Date(dt);copy.updatedAt=isNaN(parsed)?new Date(0).toISOString():parsed.toISOString()}
+    if(copy.type==='income'&&!copy.incomeSource&&copy.note)copy.incomeSource=copy.note;
+    return copy;
+  });
+  persist();
+}
 function persist(){localStorage.setItem(STORAGE,JSON.stringify(state))}
 function money(n){const v=Number(n)||0;return (v<0?'-$':'$')+Math.abs(Math.round(v)).toLocaleString('zh-TW')}
 function daysInMonthKey(key){const[y,m]=key.split('-').map(Number);return new Date(y,m,0).getDate()}
@@ -81,7 +94,34 @@ async function deleteRecord(id){const r=state.records.find(x=>String(x.id)===Str
 $('undoDelete').onclick=async()=>{if(!deletedBuffer)return;clearTimeout(deleteTimer);const restored=deletedBuffer.record;state.records.splice(Math.max(0,deletedBuffer.index),0,restored);persist();renderAll();$('undoBar').classList.add('hidden');deletedBuffer=null;await syncRemote('upsertRecord',{record:restored})}
 function switchTab(name){document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));document.querySelectorAll('.panel').forEach(p=>p.classList.add('hidden'));$(name).classList.remove('hidden');if(name==='budget')loadMonthForm();if(name==='history')renderHistory()}
 function newer(a,b){return String(a||'')>String(b||'')}
-async function loadRemote(){try{const data=await jsonpCall('load',{});if(!data||data.ok===false||!Array.isArray(data.records)||!data.monthlySettings)throw new Error((data&&data.error)||'invalid_data');const localRecords=[...state.records],localSettings={...state.monthlySettings},remoteRecords=data.records,remoteSettings=data.monthlySettings;const merged=new Map();remoteRecords.forEach(r=>merged.set(String(r.id),r));const toUpload=[];localRecords.forEach(r=>{const key=String(r.id),remote=merged.get(key);if(!remote){merged.set(key,r);toUpload.push(r)}else if(newer(r.updatedAt,remote.updatedAt)){merged.set(key,r);toUpload.push(r)}});const mergedSettings={...remoteSettings};const settingsToUpload=[];Object.keys(localSettings).forEach(k=>{if(!Object.prototype.hasOwnProperty.call(remoteSettings,k)){mergedSettings[k]=localSettings[k];settingsToUpload.push([k,localSettings[k]])}});state={records:[...merged.values()],monthlySettings:mergedSettings};persist();renderAll();loadMonthForm();for(const r of toUpload)await syncRemote('upsertRecord',{record:r});for(const [month,s] of settingsToUpload)await syncRemote('saveSettings',{month,...s});$('syncDot').className='dot ok';$('syncText').textContent='已與 Google Sheet 同步'}catch(e){$('syncDot').className='dot warn';$('syncText').textContent='無法讀取 Google Sheet；目前使用本機快取'}}
+async function loadRemote(){
+  try{
+    $('syncDot').className='dot warn';$('syncText').textContent='正在核對 Google Sheet…';
+    const data=await jsonpCall('load',{});
+    if(!data||data.ok===false||!Array.isArray(data.records)||!data.monthlySettings)throw new Error((data&&data.error)||'invalid_data');
+    const localRecords=[...state.records],localSettings={...state.monthlySettings},remoteRecords=data.records,remoteSettings=data.monthlySettings;
+    const merged=new Map();remoteRecords.forEach(r=>merged.set(String(r.id),r));
+    const toUpload=[];
+    localRecords.forEach(r=>{const key=String(r.id),remote=merged.get(key);if(!remote){merged.set(key,r);toUpload.push(r)}else if(newer(r.updatedAt,remote.updatedAt)){merged.set(key,r);toUpload.push(r)}});
+    const mergedSettings={...remoteSettings};const settingsToUpload=[];
+    Object.keys(localSettings).forEach(k=>{if(!Object.prototype.hasOwnProperty.call(remoteSettings,k)){mergedSettings[k]=localSettings[k];settingsToUpload.push([k,localSettings[k]])}});
+    state={records:[...merged.values()],monthlySettings:mergedSettings};persist();renderAll();loadMonthForm();
+    let allOk=true;
+    for(const r of toUpload){if(!(await syncRemote('upsertRecord',{record:r})))allOk=false}
+    for(const [month,s] of settingsToUpload){if(!(await syncRemote('saveSettings',{month,...s})))allOk=false}
+    if(toUpload.length||settingsToUpload.length){
+      const verify=await jsonpCall('load',{});
+      if(!verify||verify.ok===false)allOk=false;
+      else{
+        const remoteIds=new Set((verify.records||[]).map(r=>String(r.id)));
+        for(const r of toUpload)if(!remoteIds.has(String(r.id)))allOk=false;
+        for(const [month] of settingsToUpload)if(!Object.prototype.hasOwnProperty.call(verify.monthlySettings||{},month))allOk=false;
+      }
+    }
+    $('syncDot').className=allOk?'dot ok':'dot warn';
+    $('syncText').textContent=allOk?'已與 Google Sheet 同步':'部分本機資料尚未同步；請保持此頁開啟並重新整理一次';
+  }catch(e){$('syncDot').className='dot warn';$('syncText').textContent='無法讀取 Google Sheet；目前使用本機快取'}
+}
 document.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>switchTab(btn.dataset.tab));
 $('type').addEventListener('change',toggleType);
 $('budgetMonth').addEventListener('change',loadMonthForm);
