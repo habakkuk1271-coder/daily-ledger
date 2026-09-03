@@ -15,6 +15,7 @@ function doPost(e) {
       case 'upsertRecord': upsertRecord_(body.record); break;
       case 'deleteRecord': deleteRecord_(body.id); break;
       case 'saveSettings': saveSettings_(body.month, body.salary, body.saving); break;
+      case 'bootstrap': bootstrap_(body.records || [], body.monthlySettings || {}); break;
       default: return json_({ok:false,error:'unknown_action'});
     }
     return json_({ok:true});
@@ -26,21 +27,39 @@ function doPost(e) {
 function loadAll_() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const rs = ss.getSheetByName(RECORDS_SHEET);
-  const ssheet = ss.getSheetByName(SETTINGS_SHEET);
+  const settingsSheet = ss.getSheetByName(SETTINGS_SHEET);
   const records = [];
   if (rs.getLastRow() > 1) {
     const values = rs.getRange(2,1,rs.getLastRow()-1,10).getValues();
     values.forEach(r => {
       if (!r[0]) return;
-      records.push({id:String(r[0]),date:String(r[1]),time:String(r[2]),type:String(r[3]),amount:Number(r[4])||0,payment:String(r[5]||''),category:String(r[6]||''),note:String(r[7]||''),createdAt:String(r[8]||''),updatedAt:String(r[9]||'')});
+      records.push({
+        id:String(r[0]), date:String(r[1]), time:String(r[2]), type:String(r[3]),
+        amount:Number(r[4])||0, payment:String(r[5]||''), category:String(r[6]||''),
+        note:String(r[7]||''), createdAt:String(r[8]||''), updatedAt:String(r[9]||'')
+      });
     });
   }
   const monthlySettings = {};
-  if (ssheet.getLastRow() > 1) {
-    const values = ssheet.getRange(2,1,ssheet.getLastRow()-1,4).getValues();
+  if (settingsSheet.getLastRow() > 1) {
+    const values = settingsSheet.getRange(2,1,settingsSheet.getLastRow()-1,4).getValues();
     values.forEach(r => { if (r[0]) monthlySettings[String(r[0])] = {salary:Number(r[1])||0,saving:Number(r[2])||0}; });
   }
   return {ok:true,records,monthlySettings};
+}
+
+function bootstrap_(records, monthlySettings) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    records.forEach(r => upsertRecord_(r));
+    Object.keys(monthlySettings).forEach(month => {
+      const s = monthlySettings[month] || {};
+      saveSettings_(month, s.salary, s.saving);
+    });
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function upsertRecord_(record) {
@@ -49,9 +68,10 @@ function upsertRecord_(record) {
   const sh = ss.getSheetByName(RECORDS_SHEET);
   const id = String(record.id);
   const now = new Date();
-  let row = findRowByFirstColumn_(sh,id);
+  const row = findRowByFirstColumn_(sh,id);
   const created = row ? sh.getRange(row,9).getValue() : now;
-  const values = [[id,record.date||'',record.time||'',record.type||'',Number(record.amount)||0,record.payment||'',record.category||'',record.note||record.incomeSource||'',created,now]];
+  const sourceOrNote = record.note || record.incomeSource || '';
+  const values = [[id,record.date||'',record.time||'',record.type||'',Number(record.amount)||0,record.payment||'',record.category||'',sourceOrNote,created,now]];
   if (row) sh.getRange(row,1,1,10).setValues(values); else sh.appendRow(values[0]);
 }
 
