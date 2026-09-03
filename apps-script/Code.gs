@@ -1,6 +1,7 @@
 const SPREADSHEET_ID = '1-8pCQtFgyE2XjKvN-0NT9_sgQm-oYOPEvHjzlb6jWzU';
 const RECORDS_SHEET = '帳目';
 const SETTINGS_SHEET = '月份設定';
+const ACCESS_KEY_PROPERTY = 'ACCESS_KEY';
 
 function doGet(e) {
   try {
@@ -8,12 +9,13 @@ function doGet(e) {
     const action = p.action || 'load';
     const data = p.data ? JSON.parse(p.data) : {};
     let result;
+    if (action !== 'ping') requireAccess_(p.key);
     switch (action) {
       case 'load':
         result = loadAll_();
         break;
       case 'ping':
-        result = {ok:true,version:2};
+        result = {ok:true,version:3,auth:'required'};
         break;
       case 'upsertRecord':
         withLock_(function(){ upsertRecord_(data.record); });
@@ -39,6 +41,7 @@ function doGet(e) {
 function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    requireAccess_(body.key);
     switch (body.action) {
       case 'upsertRecord': withLock_(function(){ upsertRecord_(body.record); }); break;
       case 'deleteRecord': withLock_(function(){ deleteRecord_(body.id); }); break;
@@ -140,6 +143,12 @@ function findRowByFirstColumn_(sheet,value) {
   const vals = sheet.getRange(2,1,last-1,1).getDisplayValues();
   for (let i=0;i<vals.length;i++) if (String(vals[i][0]) === String(value)) return i+2;
   return 0;
+}
+
+function requireAccess_(provided) {
+  const expected = PropertiesService.getScriptProperties().getProperty(ACCESS_KEY_PROPERTY);
+  if (!expected) throw new Error('access_key_not_configured');
+  if (!provided || String(provided) !== String(expected)) throw new Error('unauthorized');
 }
 
 function withLock_(fn) {
