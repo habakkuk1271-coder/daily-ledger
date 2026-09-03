@@ -14,25 +14,24 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
           s=Path('index.html').read_text()
           def body(name):
-              m=re.search(r'function\\s+'+re.escape(name)+r'\\s*\\([^)]*\\)\\s*\\{',s)
-              if not m: return 'NOT FOUND'
-              i=m.end()-1; depth=0; quote=None; esc=False
-              j=i
+              pos=s.find('function '+name+'(')
+              if pos<0: return 'NOT FOUND'
+              i=s.find('{',pos)
+              depth=0; quote=None; esc=False; j=i
               while j<len(s):
                   c=s[j]
                   if quote:
                       if esc: esc=False
-                      elif c=='\\\\': esc=True
+                      elif c=='\\': esc=True
                       elif c==quote: quote=None
                   else:
                       if c in "'\"`": quote=c
                       elif c=='{': depth+=1
                       elif c=='}':
                           depth-=1
-                          if depth==0: return s[m.start():j+1]
+                          if depth==0: return s[pos:j+1]
                   j+=1
               return 'UNTERMINATED'
           for n in ['migrate','carryDeduction','stats','previousOverspend','cardStatus','flushPending','loadRemote','currentDayStats','renderTrend','saveRecord','createCarryRecord','applyCarryFor','resetBudgetCarry','exportCharts']:
