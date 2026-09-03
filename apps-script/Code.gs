@@ -2,61 +2,53 @@ const SPREADSHEET_ID = '1-8pCQtFgyE2XjKvN-0NT9_sgQm-oYOPEvHjzlb6jWzU';
 const RECORDS_SHEET = '帳目';
 const SETTINGS_SHEET = '月份設定';
 
-// 正式部署前，請只在 Apps Script 編輯器內把下方字串換成你的私有存取碼。
-// 不要把真正的存取碼提交到公開 GitHub repository。
-const ACCESS_KEY = 'CHANGE_ME';
-
 function doGet(e) {
   try {
     const p = (e && e.parameter) || {};
-    const callback = safeCallback_(p.callback || '');
-    if (!isAuthorized_(p.key)) return respond_({ok:false,error:'unauthorized'}, callback);
     const action = p.action || 'load';
-    const payload = p.payload ? JSON.parse(p.payload) : {};
+    const data = p.data ? JSON.parse(p.data) : {};
     let result;
     switch (action) {
       case 'load':
         result = loadAll_();
         break;
+      case 'ping':
+        result = {ok:true,version:2};
+        break;
       case 'upsertRecord':
-        upsertRecord_(payload.record);
+        withLock_(function(){ upsertRecord_(data.record); });
         result = {ok:true};
         break;
       case 'deleteRecord':
-        deleteRecord_(payload.id);
+        withLock_(function(){ deleteRecord_(data.id); });
         result = {ok:true};
         break;
       case 'saveSettings':
-        saveSettings_(payload.month, payload.salary, payload.saving);
+        withLock_(function(){ saveSettings_(data.month, data.salary, data.saving); });
         result = {ok:true};
         break;
       default:
         result = {ok:false,error:'unknown_action'};
     }
-    return respond_(result, callback);
+    return output_(result, p.callback);
   } catch (err) {
-    return respond_({ok:false,error:String(err)}, safeCallback_(e && e.parameter && e.parameter.callback || ''));
+    return output_({ok:false,error:String(err && err.message ? err.message : err)}, e && e.parameter && e.parameter.callback);
   }
 }
 
 function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (!isAuthorized_(body.key)) return json_({ok:false,error:'unauthorized'});
     switch (body.action) {
-      case 'upsertRecord': upsertRecord_(body.record); break;
-      case 'deleteRecord': deleteRecord_(body.id); break;
-      case 'saveSettings': saveSettings_(body.month, body.salary, body.saving); break;
+      case 'upsertRecord': withLock_(function(){ upsertRecord_(body.record); }); break;
+      case 'deleteRecord': withLock_(function(){ deleteRecord_(body.id); }); break;
+      case 'saveSettings': withLock_(function(){ saveSettings_(body.month, body.salary, body.saving); }); break;
       default: return json_({ok:false,error:'unknown_action'});
     }
     return json_({ok:true});
   } catch (err) {
-    return json_({ok:false,error:String(err)});
+    return json_({ok:false,error:String(err && err.message ? err.message : err)});
   }
-}
-
-function isAuthorized_(key) {
-  return ACCESS_KEY !== 'CHANGE_ME' && String(key || '') === ACCESS_KEY;
 }
 
 function loadAll_() {
@@ -64,25 +56,39 @@ function loadAll_() {
   const rs = ss.getSheetByName(RECORDS_SHEET);
   const settingsSheet = ss.getSheetByName(SETTINGS_SHEET);
   const records = [];
+
   if (rs.getLastRow() > 1) {
-    const values = rs.getRange(2,1,rs.getLastRow()-1,10).getValues();
-    values.forEach(r => {
-      if (!r[0]) return;
+    const count = rs.getLastRow() - 1;
+    const raw = rs.getRange(2,1,count,11).getValues();
+    const shown = rs.getRange(2,1,count,11).getDisplayValues();
+    raw.forEach(function(r,i) {
+      if (!shown[i][0]) return;
       records.push({
-        id:String(r[0]), date:String(r[1]), time:String(r[2]), type:String(r[3]),
-        amount:Number(r[4])||0, payment:String(r[5]||''), category:String(r[6]||''),
-        note:String(r[7]||''), createdAt:dateText_(r[8]), updatedAt:dateText_(r[9])
+        id:String(shown[i][0]),
+        date:String(shown[i][1]),
+        time:String(shown[i][2]),
+        type:String(shown[i][3]),
+        amount:Number(r[4]) || 0,
+        payment:String(shown[i][5] || ''),
+        category:String(shown[i][6] || ''),
+        incomeSource:String(shown[i][7] || ''),
+        note:String(shown[i][8] || ''),
+        createdAt:iso_(r[9]),
+        updatedAt:iso_(r[10])
       });
     });
   }
+
   const monthlySettings = {};
   if (settingsSheet.getLastRow() > 1) {
-    const values = settingsSheet.getRange(2,1,settingsSheet.getLastRow()-1,4).getValues();
-    values.forEach(r => {
-      if (r[0]) monthlySettings[String(r[0])] = {salary:Number(r[1])||0,saving:Number(r[2])||0};
+    const count = settingsSheet.getLastRow()-1;
+    const values = settingsSheet.getRange(2,1,count,4).getValues();
+    const shown = settingsSheet.getRange(2,1,count,4).getDisplayValues();
+    values.forEach(function(r,i) {
+      if (shown[i][0]) monthlySettings[String(shown[i][0])] = {salary:Number(r[1])||0,saving:Number(r[2])||0};
     });
   }
-  return {ok:true,records,monthlySettings};
+  return {ok:true,version:2,records:records,monthlySettings:monthlySettings};
 }
 
 function upsertRecord_(record) {
@@ -92,13 +98,26 @@ function upsertRecord_(record) {
   const id = String(record.id);
   const now = new Date();
   const row = findRowByFirstColumn_(sh,id);
-  const created = row ? sh.getRange(row,9).getValue() : now;
-  const sourceOrNote = record.note || record.incomeSource || '';
-  const values = [[id,record.date||'',record.time||'',record.type||'',Number(record.amount)||0,record.payment||'',record.category||'',sourceOrNote,created,now]];
-  if (row) sh.getRange(row,1,1,10).setValues(values); else sh.appendRow(values[0]);
+  const created = row ? sh.getRange(row,10).getValue() : now;
+  const values = [[
+    id,
+    record.date || '',
+    record.time || '',
+    record.type || '',
+    Number(record.amount) || 0,
+    record.payment || '',
+    record.category || '',
+    record.incomeSource || '',
+    record.note || '',
+    created,
+    now
+  ]];
+  if (row) sh.getRange(row,1,1,11).setValues(values);
+  else sh.appendRow(values[0]);
 }
 
 function deleteRecord_(id) {
+  if (!id) throw new Error('missing_record_id');
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = ss.getSheetByName(RECORDS_SHEET);
   const row = findRowByFirstColumn_(sh,String(id));
@@ -111,7 +130,8 @@ function saveSettings_(month,salary,saving) {
   const sh = ss.getSheetByName(SETTINGS_SHEET);
   const row = findRowByFirstColumn_(sh,String(month));
   const values = [[String(month),Number(salary)||0,Number(saving)||0,new Date()]];
-  if (row) sh.getRange(row,1,1,4).setValues(values); else sh.appendRow(values[0]);
+  if (row) sh.getRange(row,1,1,4).setValues(values);
+  else sh.appendRow(values[0]);
 }
 
 function findRowByFirstColumn_(sheet,value) {
@@ -122,19 +142,21 @@ function findRowByFirstColumn_(sheet,value) {
   return 0;
 }
 
-function dateText_(v) {
-  if (!v) return '';
-  if (v instanceof Date) return v.toISOString();
-  return String(v);
+function withLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { fn(); } finally { lock.releaseLock(); }
 }
 
-function safeCallback_(name) {
-  return /^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(String(name || '')) ? String(name) : '';
+function iso_(value) {
+  if (!value) return '';
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) return value.toISOString();
+  return String(value);
 }
 
-function respond_(obj, callback) {
-  if (callback) {
-    return ContentService.createTextOutput(callback + '(' + JSON.stringify(obj) + ');')
+function output_(obj, callback) {
+  if (callback && /^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(String(callback))) {
+    return ContentService.createTextOutput(String(callback) + '(' + JSON.stringify(obj) + ');')
       .setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
   return json_(obj);
