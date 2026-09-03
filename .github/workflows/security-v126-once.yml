@@ -1,0 +1,62 @@
+name: Security V1.2.6 once
+on:
+  push:
+    paths:
+      - '.github/workflows/security-v126-once.yml'
+permissions:
+  contents: write
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security-v126
+      - name: Patch backend and frontend auth
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('apps-script/Code.gs'); s=p.read_text()
+          s=s.replace("const SETTINGS_SHEET = '月份設定';", "const SETTINGS_SHEET = '月份設定';\nconst ACCESS_KEY_PROPERTY = 'ACCESS_KEY';")
+          s=s.replace("    const data = p.data ? JSON.parse(p.data) : {};\n    let result;", "    const data = p.data ? JSON.parse(p.data) : {};\n    let result;\n    if (action !== 'ping') requireAccess_(p.key);")
+          s=s.replace("    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');\n    switch (body.action) {", "    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');\n    requireAccess_(body.key);\n    switch (body.action) {")
+          anchor="function withLock_(fn) {"
+          helper="function requireAccess_(provided) {\n  const expected = PropertiesService.getScriptProperties().getProperty(ACCESS_KEY_PROPERTY);\n  if (!expected) throw new Error('access_key_not_configured');\n  if (!provided || String(provided) !== String(expected)) throw new Error('unauthorized');\n}\n\n"
+          if helper.strip() not in s: s=s.replace(anchor,helper+anchor)
+          s=s.replace("result = {ok:true,version:2};", "result = {ok:true,version:3,auth:'required'};")
+          p.write_text(s)
+
+          p=Path('index.html'); s=p.read_text()
+          s=s.replace('日日帳 V1.2.5','日日帳 V1.2.6')
+          s=s.replace("const $=id=>document.getElementById(id), STORAGE='daily-ledger-v1', API_URL=", "const $=id=>document.getElementById(id), STORAGE='daily-ledger-v1', ACCESS_STORAGE='daily-ledger-access-key', API_URL=")
+          old="function setSync(t,ok=false){$('syncText').textContent=t;$('syncDot').className='dot '+(ok?'ok':'warn')}function jsonpCall(action,payload={}){return new Promise((resolve,reject)=>{let cb='__dlcb_'+Date.now()+'_'+Math.random().toString(36).slice(2),s=document.createElement('script'),timer=setTimeout(()=>done(new Error('timeout')),15000);function done(err,v){clearTimeout(timer);delete window[cb];s.remove();err?reject(err):resolve(v)}window[cb]=v=>done(null,v);s.onerror=()=>done(new Error('network'));s.src=API_URL+'?action='+encodeURIComponent(action)+'&data='+encodeURIComponent(JSON.stringify(payload))+'&callback='+cb;document.body.appendChild(s)})}"
+          new="function setSync(t,ok=false){$('syncText').textContent=t;$('syncDot').className='dot '+(ok?'ok':'warn')}function accessKey(){return localStorage.getItem(ACCESS_STORAGE)||''}function requestAccessKey(force=false){let current=force?'':accessKey();if(current)return current;let k=prompt('請輸入日日帳私人存取碼。這組碼只會保存在此裝置，不會寫入 GitHub。')||'';k=k.trim();if(k)localStorage.setItem(ACCESS_STORAGE,k);return k}function forgetAccessKey(){localStorage.removeItem(ACCESS_STORAGE)}function jsonpCall(action,payload={}){return new Promise((resolve,reject)=>{let key=action==='ping'?'':requestAccessKey(false);if(action!=='ping'&&!key){reject(new Error('access_required'));return}let cb='__dlcb_'+Date.now()+'_'+Math.random().toString(36).slice(2),s=document.createElement('script'),timer=setTimeout(()=>done(new Error('timeout')),15000);function done(err,v){clearTimeout(timer);delete window[cb];s.remove();if(!err&&v&&!v.ok&&String(v.error||'').includes('unauthorized')){forgetAccessKey();setSync('存取碼錯誤，請重新輸入');}err?reject(err):resolve(v)}window[cb]=v=>done(null,v);s.onerror=()=>done(new Error('network'));s.src=API_URL+'?action='+encodeURIComponent(action)+'&data='+encodeURIComponent(JSON.stringify(payload))+'&key='+encodeURIComponent(key)+'&callback='+cb;document.body.appendChild(s)})}"
+          if old not in s: raise SystemExit('jsonp block not found')
+          s=s.replace(old,new,1)
+          s=s.replace("async function loadRemote(){setSync('正在核對 Google Sheet…');try{", "async function loadRemote(){setSync('正在核對 Google Sheet…');try{if(!accessKey()&&!requestAccessKey(false)){setSync('尚未設定私人存取碼');render();return}")
+          p.write_text(s)
+      - name: Static verification
+        run: |
+          grep -q "ACCESS_KEY_PROPERTY" apps-script/Code.gs
+          grep -q "requireAccess_(p.key)" apps-script/Code.gs
+          grep -q "requireAccess_(body.key)" apps-script/Code.gs
+          grep -q "PropertiesService.getScriptProperties" apps-script/Code.gs
+          grep -q "ACCESS_STORAGE='daily-ledger-access-key'" index.html
+          grep -q "encodeURIComponent(key)" index.html
+          grep -q "日日帳 V1.2.6" index.html
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('index.html').read_text()
+          assert s.count('<script>')==1 and s.count('</script>')==1
+          assert 'PLACEHOLDER' not in s
+          b=Path('apps-script/Code.gs').read_text()
+          assert "case 'load':" in b and "case 'upsertRecord':" in b and "case 'deleteRecord':" in b
+          print('static checks ok')
+          PY
+      - name: Commit hardened files
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.html apps-script/Code.gs
+          git commit -m 'Add access-key security layer V1.2.6'
+          git push origin HEAD:security-v126
