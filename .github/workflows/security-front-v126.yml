@@ -1,0 +1,46 @@
+name: Security frontend V1.2.6
+on:
+  push:
+    paths:
+      - '.github/workflows/security-front-v126.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security-hardening-v126
+      - name: Patch frontend access key support
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text()
+          s=s.replace('<title>日日帳 V1.2.5</title>','<title>日日帳 V1.2.6</title>',1)
+          s=s.replace('Google Sheet 是正式資料庫；本機保留快取與離線容錯。V1.2.5','Google Sheet 是正式資料庫；本機保留快取與離線容錯。V1.2.6',1)
+          old="const $=id=>document.getElementById(id), STORAGE='daily-ledger-v1', API_URL='https://script.google.com/macros/s/AKfycbxcaxSgwLjudxZ0RpgOOxLfjJoAKmmZFBIbgOIxbFsLNP5lO2rv7L1jCQfVGnnBOta2/exec';let editingId=null,deletedBuffer=null,deleteTimer=null,saveTimer=null;"
+          new="const $=id=>document.getElementById(id), STORAGE='daily-ledger-v1', ACCESS_KEY_STORAGE='daily-ledger-access-key', API_URL='https://script.google.com/macros/s/AKfycbxcaxSgwLjudxZ0RpgOOxLfjJoAKmmZFBIbgOIxbFsLNP5lO2rv7L1jCQfVGnnBOta2/exec';let editingId=null,deletedBuffer=null,deleteTimer=null,saveTimer=null;"
+          if old not in s: raise SystemExit('const marker not found')
+          s=s.replace(old,new,1)
+          old2="function setSync(t,ok=false){$('syncText').textContent=t;$('syncDot').className='dot '+(ok?'ok':'warn')}function jsonpCall(action,payload={}){return new Promise((resolve,reject)=>{let cb='__dlcb_'+Date.now()+'_'+Math.random().toString(36).slice(2),s=document.createElement('script'),timer=setTimeout(()=>done(new Error('timeout')),15000);function done(err,v){clearTimeout(timer);delete window[cb];s.remove();err?reject(err):resolve(v)}window[cb]=v=>done(null,v);s.onerror=()=>done(new Error('network'));s.src=API_URL+'?action='+encodeURIComponent(action)+'&data='+encodeURIComponent(JSON.stringify(payload))+'&callback='+cb;document.body.appendChild(s)})}"
+          new2="function setSync(t,ok=false){$('syncText').textContent=t;$('syncDot').className='dot '+(ok?'ok':'warn')}function getAccessKey(){let k=localStorage.getItem(ACCESS_KEY_STORAGE)||'';if(k)return k;if(!navigator.onLine)return '';k=(prompt('首次啟用安全同步，請輸入日日帳存取碼。這組碼只會儲存在此裝置。')||'').trim();if(k)localStorage.setItem(ACCESS_KEY_STORAGE,k);return k}function jsonpCall(action,payload={}){if(action!=='ping'&&!payload.accessKey)payload={...payload,accessKey:getAccessKey()};return new Promise((resolve,reject)=>{let cb='__dlcb_'+Date.now()+'_'+Math.random().toString(36).slice(2),s=document.createElement('script'),timer=setTimeout(()=>done(new Error('timeout')),15000);function done(err,v){clearTimeout(timer);delete window[cb];s.remove();err?reject(err):resolve(v)}window[cb]=v=>{if(v?.error==='unauthorized'){localStorage.removeItem(ACCESS_KEY_STORAGE);done(new Error('unauthorized'));return}if(v?.error==='access_key_not_configured'){done(new Error('access_key_not_configured'));return}done(null,v)};s.onerror=()=>done(new Error('network'));s.src=API_URL+'?action='+encodeURIComponent(action)+'&data='+encodeURIComponent(JSON.stringify(payload))+'&callback='+cb;document.body.appendChild(s)})}"
+          if old2 not in s: raise SystemExit('jsonp marker not found')
+          s=s.replace(old2,new2,1)
+          p.write_text(s)
+      - name: Static checks
+        run: |
+          grep -q 'ACCESS_KEY_STORAGE' index.html
+          grep -q 'getAccessKey' index.html
+          grep -q "v?.error==='unauthorized'" index.html
+          grep -q '日日帳 V1.2.6' index.html
+          test "$(grep -o '<script>' index.html | wc -l)" -eq 1
+          test "$(grep -o '</script>' index.html | wc -l)" -eq 1
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.html
+          git commit -m 'Add access-key client support V1.2.6'
+          git push origin HEAD:security-hardening-v126
