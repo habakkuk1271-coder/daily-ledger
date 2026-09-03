@@ -1,67 +1,58 @@
-name: Final sync reconciliation patch
+name: Final deployed page check
 on:
   push:
     paths:
       - '.github/workflows/list-functions-once.yml'
 permissions:
-  contents: write
+  contents: read
 jobs:
-  patch:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch load reconciliation and version
+      - name: Verify final repository state
         run: |
           python - <<'PY'
           from pathlib import Path
-          p=Path('index.html')
-          s=p.read_text(encoding='utf-8')
-          name='loadRemote'
-          marker='async function '+name+'('
-          pos=s.find(marker)
-          if pos<0: raise SystemExit('loadRemote marker not found')
-          i=s.find('{',pos)
-          depth=0; quote=None; esc=False; j=i
-          while j<len(s):
-              c=s[j]
-              if quote:
-                  if esc: esc=False
-                  elif c=='\\': esc=True
-                  elif c==quote: quote=None
-              else:
-                  if c in "'\"`": quote=c
-                  elif c=='{': depth+=1
-                  elif c=='}':
-                      depth-=1
-                      if depth==0: break
-              j+=1
-          if depth!=0: raise SystemExit('loadRemote unterminated')
-          new="""async function loadRemote(){setSync('正在核對 Google Sheet…');try{if(!accessKey()&&!requestAccessKey(false)){setSync('尚未設定私人存取碼');render();return}await flushPending();let x=await jsonpCall('load');if(!x?.ok)throw 0;let remote=x.records||[],map=new Map(remote.map(r=>[String(r.id),r]));Object.keys(state.pendingDeletes).forEach(id=>map.delete(String(id)));Object.entries(state.pendingUpserts).forEach(([id,r])=>map.set(String(id),r));state.records=[...map.values()];let nextSettings={};Object.entries(x.monthlySettings||{}).forEach(([k,v])=>{nextSettings[k]={salary:+v.salary||0,saving:+v.saving||0}});Object.keys(state.pendingSettings).forEach(k=>{nextSettings[k]=state.monthlySettings[k]||{salary:0,saving:0}});state.monthlySettings=nextSettings;persist();render();let clean=await flushPending();if(clean){let verify=await jsonpCall('load');if(!verify?.ok)throw 0;let sig=r=>JSON.stringify([String(r.id),String(r.date||''),String(r.time||''),String(r.type||''),+r.amount||0,String(r.payment||''),String(r.category||''),String(r.incomeSource||''),String(r.note||'')]),localRows=state.records.map(sig).sort(),remoteRows=(verify.records||[]).map(sig).sort(),normSettings=o=>Object.keys(o||{}).sort().map(k=>[k,+o[k].salary||0,+o[k].saving||0]),sameRows=JSON.stringify(localRows)===JSON.stringify(remoteRows),sameSettings=JSON.stringify(normSettings(state.monthlySettings))===JSON.stringify(normSettings(verify.monthlySettings||{}));if(sameRows&&sameSettings)setSync('已與 Google Sheet 完整核對同步',true);else{state.records=verify.records||[];state.monthlySettings={};Object.entries(verify.monthlySettings||{}).forEach(([k,v])=>{state.monthlySettings[k]={salary:+v.salary||0,saving:+v.saving||0}});persist();render();setSync('已重新以 Google Sheet 最新資料核對',true)}}else setSync('已保存在本機，等待同步')}catch(e){if(!accessKey())setSync('存取碼錯誤，請重新輸入');else setSync('Google Sheet 暫時無法同步；目前使用本機快取');render()}}"""
-          s=s[:pos]+new+s[j+1:]
-          if 'V1.2.6' not in s: raise SystemExit('version marker missing')
-          s=s.replace('V1.2.6','V1.2.7')
-          p.write_text(s,encoding='utf-8')
-          PY
-      - name: Verify patched frontend
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
+          import re,json
           s=Path('index.html').read_text(encoding='utf-8')
-          assert 'V1.2.7' in s and 'V1.2.6' not in s
-          assert "Object.entries(state.pendingUpserts).forEach" in s
-          assert "let nextSettings={}" in s
-          assert "已與 Google Sheet 完整核對同步" in s
-          assert "state.records.forEach(r=>{let id=String(r.id),q=map.get(id)" not in s
+          assert '日日帳 V1.2.7' in s and 'V1.2.6' not in s
+          assert '<option>保險</option><option>電信規費</option>' in s
+          assert '保險、電信規費' not in s
+          assert '已與 Google Sheet 完整核對同步' in s
+          assert 'Object.entries(state.pendingUpserts).forEach' in s
+          assert 'let nextSettings={}' in s
           assert '\ufffd' not in s
           scripts=re.findall(r'<script[^>]*>([\s\S]*?)</script>',s,flags=re.I)
           Path('/tmp/app.js').write_text('\n'.join(scripts),encoding='utf-8')
+          m=json.loads(Path('manifest.webmanifest').read_text(encoding='utf-8'))
+          assert m['display']=='standalone' and m['icons'][0]['src']=='apple-touch-icon.png'
           PY
           node --check /tmp/app.js
-      - name: Commit patch
+          cp apps-script/Code.gs /tmp/code.js && node --check /tmp/code.js
+      - name: Wait for and verify GitHub Pages V1.2.7
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html
-          git commit -m 'Harden remote reconciliation and exact sync verification'
-          git push
+          set -euo pipefail
+          URL='https://habakkuk1271-coder.github.io/daily-ledger/'
+          ok=0
+          for i in $(seq 1 24); do
+            page=$(curl -fsSL --max-time 20 "$URL" || true)
+            if echo "$page" | grep -q '日日帳 V1.2.7'; then ok=1; break; fi
+            sleep 5
+          done
+          test "$ok" = 1
+          echo "$page" | grep -q '<option>保險</option><option>電信規費</option>'
+          ! echo "$page" | grep -q '保險、電信規費'
+          echo "$page" | grep -q '已與 Google Sheet 完整核對同步'
+          curl -fsSI --max-time 20 'https://habakkuk1271-coder.github.io/daily-ledger/manifest.webmanifest' >/dev/null
+          curl -fsSI --max-time 20 'https://habakkuk1271-coder.github.io/daily-ledger/apple-touch-icon.png' >/dev/null
+      - name: Verify live backend access protection
+        run: |
+          set -euo pipefail
+          BASE='https://script.google.com/macros/s/AKfycbxcaxSgwLjudxZ0RpgOOxLfjJoAKmmZFBIbgOIxbFsLNP5lO2rv7L1jCQfVGnnBOta2/exec'
+          ping=$(curl -fsSL --max-time 20 "$BASE?action=ping")
+          echo "$ping" | grep -q '"ok":true'
+          echo "$ping" | grep -q '"version":3'
+          echo "$ping" | grep -q '"auth":"required"'
+          noauth=$(curl -fsSL --max-time 20 "$BASE?action=load")
+          echo "$noauth" | grep -q '"error":"unauthorized"'
