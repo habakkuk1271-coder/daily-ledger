@@ -1,4 +1,4 @@
-name: List functions once
+name: Inspect core functions once
 on:
   push:
     paths:
@@ -10,11 +10,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: List JS functions
+      - name: Print selected core function bodies
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
           s=Path('index.html').read_text()
-          for n in re.findall(r'function\s+([A-Za-z_$][\w$]*)\s*\(',s): print(n)
+          def body(name):
+              m=re.search(r'function\\s+'+re.escape(name)+r'\\s*\\([^)]*\\)\\s*\\{',s)
+              if not m: return 'NOT FOUND'
+              i=m.end()-1; depth=0; quote=None; esc=False
+              j=i
+              while j<len(s):
+                  c=s[j]
+                  if quote:
+                      if esc: esc=False
+                      elif c=='\\\\': esc=True
+                      elif c==quote: quote=None
+                  else:
+                      if c in "'\"`": quote=c
+                      elif c=='{': depth+=1
+                      elif c=='}':
+                          depth-=1
+                          if depth==0: return s[m.start():j+1]
+                  j+=1
+              return 'UNTERMINATED'
+          for n in ['migrate','carryDeduction','stats','previousOverspend','cardStatus','flushPending','loadRemote','currentDayStats','renderTrend','saveRecord','createCarryRecord','applyCarryFor','resetBudgetCarry','exportCharts']:
+              print('===== '+n+' =====')
+              print(body(n))
           PY
