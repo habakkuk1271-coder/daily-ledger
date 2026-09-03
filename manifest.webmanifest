@@ -1,0 +1,17 @@
+{
+  "name": "日日帳",
+  "short_name": "日日帳",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f9fd",
+  "theme_color": "#eaf4ff",
+  "icons": [
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
