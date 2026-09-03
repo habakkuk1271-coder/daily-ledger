@@ -1,6 +1,7 @@
 const SPREADSHEET_ID = '1-8pCQtFgyE2XjKvN-0NT9_sgQm-oYOPEvHjzlb6jWzU';
 const RECORDS_SHEET = '帳目';
 const SETTINGS_SHEET = '月份設定';
+const ACCESS_KEY_PROPERTY = 'ACCESS_KEY';
 
 function doGet(e) {
   try {
@@ -8,12 +9,15 @@ function doGet(e) {
     const action = p.action || 'load';
     const data = p.data ? JSON.parse(p.data) : {};
     let result;
+
+    if (action !== 'ping') requireAccess_(data && data.accessKey);
+
     switch (action) {
       case 'load':
         result = loadAll_();
         break;
       case 'ping':
-        result = {ok:true,version:2};
+        result = {ok:true,version:3,authRequired:true};
         break;
       case 'upsertRecord':
         withLock_(function(){ upsertRecord_(data.record); });
@@ -39,7 +43,9 @@ function doGet(e) {
 function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    if (body.action !== 'ping') requireAccess_(body && body.accessKey);
     switch (body.action) {
+      case 'ping': return json_({ok:true,version:3,authRequired:true});
       case 'upsertRecord': withLock_(function(){ upsertRecord_(body.record); }); break;
       case 'deleteRecord': withLock_(function(){ deleteRecord_(body.id); }); break;
       case 'saveSettings': withLock_(function(){ saveSettings_(body.month, body.salary, body.saving); }); break;
@@ -49,6 +55,30 @@ function doPost(e) {
   } catch (err) {
     return json_({ok:false,error:String(err && err.message ? err.message : err)});
   }
+}
+
+function requireAccess_(provided) {
+  const expected = PropertiesService.getScriptProperties().getProperty(ACCESS_KEY_PROPERTY);
+  if (!expected) throw new Error('access_key_not_configured');
+  if (!provided || !constantTimeEqual_(String(provided), String(expected))) throw new Error('unauthorized');
+}
+
+function constantTimeEqual_(a,b) {
+  let diff = a.length ^ b.length;
+  const n = Math.max(a.length,b.length);
+  for (let i=0;i<n;i++) diff |= (a.charCodeAt(i % Math.max(1,a.length)) || 0) ^ (b.charCodeAt(i % Math.max(1,b.length)) || 0);
+  return diff === 0;
+}
+
+function setupAccessKey() {
+  const key = Utilities.getUuid().replace(/-/g,'') + Utilities.getUuid().replace(/-/g,'').slice(0,16);
+  PropertiesService.getScriptProperties().setProperty(ACCESS_KEY_PROPERTY,key);
+  console.log('ACCESS_KEY=' + key);
+  return key;
+}
+
+function clearAccessKey() {
+  PropertiesService.getScriptProperties().deleteProperty(ACCESS_KEY_PROPERTY);
 }
 
 function loadAll_() {
@@ -88,7 +118,7 @@ function loadAll_() {
       if (shown[i][0]) monthlySettings[String(shown[i][0])] = {salary:Number(r[1])||0,saving:Number(r[2])||0};
     });
   }
-  return {ok:true,version:2,records:records,monthlySettings:monthlySettings};
+  return {ok:true,version:3,records:records,monthlySettings:monthlySettings};
 }
 
 function upsertRecord_(record) {
