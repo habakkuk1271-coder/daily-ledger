@@ -1,0 +1,20 @@
+name: List functions once
+on:
+  push:
+    paths:
+      - '.github/workflows/list-functions-once.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: List JS functions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('index.html').read_text()
+          for n in re.findall(r'function\s+([A-Za-z_$][\w$]*)\s*\(',s): print(n)
+          PY
