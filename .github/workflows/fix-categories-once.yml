@@ -1,0 +1,38 @@
+name: Fix categories once
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-categories-once.yml'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Split insurance and telecom categories
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text()
+          old='<option>保險、電信規費</option>'
+          new='<option>保險</option><option>電信規費</option>'
+          if old not in s:
+              raise SystemExit('target category option not found')
+          if s.count(old)!=1:
+              raise SystemExit(f'unexpected target count: {s.count(old)}')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Verify category split
+        run: |
+          grep -q '<option>保險</option><option>電信規費</option>' index.html
+          ! grep -q '<option>保險、電信規費</option>' index.html
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git commit -m 'Split insurance and telecom categories' || exit 0
+          git push
