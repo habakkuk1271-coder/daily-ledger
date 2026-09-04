@@ -26,7 +26,7 @@ function doGet(e) {
         result = {ok:true};
         break;
       case 'saveSettings':
-        withLock_(function(){ saveSettings_(data.month, data.salary, data.saving); });
+        withLock_(function(){ saveSettings_(data.month, data.salary, data.saving, data.offeringReserve); });
         result = {ok:true};
         break;
       default:
@@ -45,7 +45,7 @@ function doPost(e) {
     switch (body.action) {
       case 'upsertRecord': withLock_(function(){ upsertRecord_(body.record); }); break;
       case 'deleteRecord': withLock_(function(){ deleteRecord_(body.id); }); break;
-      case 'saveSettings': withLock_(function(){ saveSettings_(body.month, body.salary, body.saving); }); break;
+      case 'saveSettings': withLock_(function(){ saveSettings_(body.month, body.salary, body.saving, body.offeringReserve); }); break;
       default: return json_({ok:false,error:'unknown_action'});
     }
     return json_({ok:true});
@@ -85,10 +85,10 @@ function loadAll_() {
   const monthlySettings = {};
   if (settingsSheet.getLastRow() > 1) {
     const count = settingsSheet.getLastRow()-1;
-    const values = settingsSheet.getRange(2,1,count,4).getValues();
-    const shown = settingsSheet.getRange(2,1,count,4).getDisplayValues();
+    const values = settingsSheet.getRange(2,1,count,5).getValues();
+    const shown = settingsSheet.getRange(2,1,count,5).getDisplayValues();
     values.forEach(function(r,i) {
-      if (shown[i][0]) monthlySettings[String(shown[i][0])] = {salary:Number(r[1])||0,saving:Number(r[2])||0};
+      if (shown[i][0]) monthlySettings[String(shown[i][0])] = {salary:Number(r[1])||0,saving:Number(r[2])||0,offeringReserve:Number(r[3])||0};
     });
   }
   return {ok:true,version:2,records:records,monthlySettings:monthlySettings};
@@ -127,13 +127,13 @@ function deleteRecord_(id) {
   if (row) sh.deleteRow(row);
 }
 
-function saveSettings_(month,salary,saving) {
+function saveSettings_(month,salary,saving,offeringReserve) {
   if (!month) throw new Error('missing_month');
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = ss.getSheetByName(SETTINGS_SHEET);
   const row = findRowByFirstColumn_(sh,String(month));
-  const values = [[String(month),Number(salary)||0,Number(saving)||0,new Date()]];
-  if (row) sh.getRange(row,1,1,4).setValues(values);
+  const values = [[String(month),Number(salary)||0,Number(saving)||0,Number(offeringReserve)||0,new Date()]];
+  if (row) sh.getRange(row,1,1,5).setValues(values);
   else sh.appendRow(values[0]);
 }
 
