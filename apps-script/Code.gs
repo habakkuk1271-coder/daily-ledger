@@ -2,6 +2,11 @@ const SPREADSHEET_ID = '1-8pCQtFgyE2XjKvN-0NT9_sgQm-oYOPEvHjzlb6jWzU';
 const RECORDS_SHEET = '帳目';
 const SETTINGS_SHEET = '月份設定';
 const ACCESS_KEY_PROPERTY = 'ACCESS_KEY';
+const SHORTCUT_KEY_PROPERTY = 'SHORTCUT_KEY';
+
+const SHORTCUT_ALLOWED_TYPES = ['expense','income','advance','reimbursement'];
+const SHORTCUT_ALLOWED_PAYMENTS = ['現金','永豐信用卡','國泰cube卡','富邦possible卡','聯邦吉鶴卡','台新信用卡'];
+const SHORTCUT_ALLOWED_CATEGORIES = ['餐飲','交通','日用品','娛樂','服飾','保險','電信規費','奉獻款','其他'];
 
 function doGet(e) {
   try {
@@ -41,6 +46,14 @@ function doGet(e) {
 function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+
+    if (body.action === 'shortcutAddRecord') {
+      requireShortcutAccess_(body.shortcutKey);
+      let insertedId = '';
+      withLock_(function(){ insertedId = shortcutAddRecord_(body.record); });
+      return json_({ok:true,id:insertedId});
+    }
+
     requireAccess_(body.key);
     switch (body.action) {
       case 'upsertRecord': withLock_(function(){ upsertRecord_(body.record); }); break;
@@ -92,6 +105,68 @@ function loadAll_() {
     });
   }
   return {ok:true,version:2,records:records,monthlySettings:monthlySettings};
+}
+
+function shortcutAddRecord_(record) {
+  if (!record) throw new Error('missing_record');
+  const type = String(record.type || '');
+  if (SHORTCUT_ALLOWED_TYPES.indexOf(type) < 0) throw new Error('shortcut_type_not_allowed');
+
+  const amount = Number(record.amount);
+  if (!(amount > 0) || amount > 10000000) throw new Error('invalid_amount');
+
+  const date = String(record.date || '');
+  const time = String(record.time || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('invalid_date');
+  if (!/^\d{2}:\d{2}$/.test(time)) throw new Error('invalid_time');
+
+  const rawId = String(record.id || '');
+  if (!/^shortcut-[A-Za-z0-9_-]{8,120}$/.test(rawId)) throw new Error('invalid_shortcut_id');
+
+  let payment = String(record.payment || '');
+  let category = String(record.category || '');
+  let incomeSource = String(record.incomeSource || '');
+  const note = String(record.note || '').slice(0,300);
+
+  if (type === 'expense' || type === 'advance') {
+    if (SHORTCUT_ALLOWED_PAYMENTS.indexOf(payment) < 0) throw new Error('invalid_payment');
+  } else {
+    payment = '';
+  }
+
+  if (type === 'expense') {
+    if (SHORTCUT_ALLOWED_CATEGORIES.indexOf(category) < 0) throw new Error('invalid_category');
+    incomeSource = '';
+  } else if (type === 'advance') {
+    category = '代墊';
+    incomeSource = '';
+  } else if (type === 'reimbursement') {
+    category = '請款入帳';
+    payment = '';
+  } else if (type === 'income') {
+    category = '額外收入';
+    payment = '';
+  }
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName(RECORDS_SHEET);
+  if (findRowByFirstColumn_(sh, rawId)) throw new Error('duplicate_shortcut_id');
+
+  const now = new Date();
+  sh.appendRow([
+    rawId,
+    date,
+    time,
+    type,
+    amount,
+    payment,
+    category,
+    incomeSource,
+    note,
+    now,
+    now
+  ]);
+  return rawId;
 }
 
 function upsertRecord_(record) {
@@ -149,6 +224,12 @@ function requireAccess_(provided) {
   const expected = PropertiesService.getScriptProperties().getProperty(ACCESS_KEY_PROPERTY);
   if (!expected) throw new Error('access_key_not_configured');
   if (!provided || String(provided) !== String(expected)) throw new Error('unauthorized');
+}
+
+function requireShortcutAccess_(provided) {
+  const expected = PropertiesService.getScriptProperties().getProperty(SHORTCUT_KEY_PROPERTY);
+  if (!expected) throw new Error('shortcut_key_not_configured');
+  if (!provided || String(provided) !== String(expected)) throw new Error('shortcut_unauthorized');
 }
 
 function withLock_(fn) {
